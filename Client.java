@@ -65,6 +65,10 @@ public class Client{
 						continue;
 					}
 				}
+				else if((inputs.length == 2) && (inputs[0].charAt(0) == 'b')){
+					//Cycle through servers until one is available
+				}
+				/*
 				else if(inputs.length == 4){
 					int port;
 					try{
@@ -81,6 +85,7 @@ public class Client{
 						TCP_Client(port,toSend);
 					}
 				}
+				*/
 			}
 		}
 		catch(IOException e){
