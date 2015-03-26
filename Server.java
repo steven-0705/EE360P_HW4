@@ -2,19 +2,24 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketException;
+import java.util.ArrayList;
+import java.util.PriorityQueue;
 
 public class Server{
 	private static int[] owners;
-	private static int clientsServed; // counter to track number of clients serviced
+	private static int clientsServed;
+	private static int serverID;
+	private static int serverInstances;
+	private static int numBooks;
+	private static ArrayList<Integer> crashes;
+	private static ArrayList<Integer> crashTimes;
 	private static String[] servers;
+	private static final int TIMEOUT = 100;
 	
 	public static void main(String args[]){
-		final int serverID, serverInstances, numBooks;
 		BufferedReader input = new BufferedReader(new InputStreamReader(System.in));
 		String str = null;
 		try{
@@ -53,8 +58,17 @@ public class Server{
 			catch(NumberFormatException e){
 				throw new IllegalArgumentException("Must provide valid port number");
 			}
+			while(true){
+				String crash = input.readLine();
+				if(crash == null){
+					break;
+				}
+				inputs = crash.split(" ");
+				crashes.add(Integer.parseInt(inputs[1]));
+				crashTimes.add(Integer.parseInt(inputs[2]));
+			}
+			input.close();
 			TCP_Server(TCP_port);
-			//UDP_Server(UDP_port);
 		}
 		catch(IOException e){
 			e.printStackTrace();
@@ -62,147 +76,164 @@ public class Server{
 		}
 	}
 	
-	/*
-	public static void UDP_Server(int UDP_port){
-		while(true){
-			DatagramPacket dataPacket, returnPacket;
-			dataPacket = null;
-			byte[] toReturn = null;
-			int len = 1024;
-			boolean canReturn = false;
-			try{
-				DatagramSocket dataSocket = new DatagramSocket(UDP_port);
-				byte[] buf = new byte[len];
-				while(true){
-					if(canReturn){
-						returnPacket = new DatagramPacket(toReturn, toReturn.length, dataPacket.getAddress(), dataPacket.getPort());
-						dataSocket.send(returnPacket);
-					}
-					canReturn = true;
-					dataPacket = new DatagramPacket(buf, buf.length);
-					dataSocket.receive(dataPacket);
-					String input = new String(dataPacket.getData(), 0, dataPacket.getLength());
-					String[] inputs = input.split(" ");
-					if(inputs.length != 3){
-						toReturn = "Error".getBytes();
-						continue;
-					}
-					if((inputs[1].length() < 2) || (inputs[1].charAt(0) != 'b')){
-						toReturn = "Error".getBytes();
-						continue;
-					}
-					int clientID, bookID;
-					try{
-						clientID = Integer.parseInt(inputs[0]);
-						bookID = Integer.parseInt(inputs[1].substring(1));
-					}
-					catch(NumberFormatException e){
-						toReturn = "Error".getBytes();
-						continue;
-					}
-					if(inputs[2] == "reserve"){
-						boolean SUCCEEDED = bookReserve(clientID, bookID);
-						if(SUCCEEDED){
-							toReturn = ("c" + clientID + " b" + bookID).getBytes();
-						}
-						else{
-							toReturn = ("fail c" + clientID + " b" + bookID).getBytes();
-						}
-					}
-					else if(inputs[2] == "return"){
-						boolean SUCCEEDED = bookReturn(clientID, bookID);
-						if(SUCCEEDED){
-							toReturn = ("c" + clientID + " b" + bookID).getBytes();
-						}
-						else{
-							toReturn = ("fail c" + clientID + " b" + bookID).getBytes();
-						}
-					}
-					else{
-						toReturn = "Error".getBytes();
-						continue;
-					}
-				}
-			}
-			catch(SocketException e){
-				e.printStackTrace();
-			}
-			catch(IOException e){
-				e.printStackTrace();
-			}
-		}
-	}
-	*/
-	
 	public static void TCP_Server(int TCP_port) throws IOException{
 		
-	 
-		
-		ServerSocket myServerSocket = new ServerSocket(TCP_port);
-		boolean canReturn = false;
-		
-		while(true){
-			
-			
-			String toReturn=null;
-			//first we want to get the inputs from the client
-			Socket mySocket = myServerSocket.accept();
-			PrintWriter out = new PrintWriter(mySocket.getOutputStream());
-			BufferedReader coming = new BufferedReader(new InputStreamReader(mySocket.getInputStream()));
-			if(canReturn){
-				out.println(toReturn);
-				out.flush();
-			}
-			
-			canReturn = true;
-			String input = coming.readLine();
-			String [] inputs = input.split(" ");
-			
-			
-			if(inputs.length != 3){
-				toReturn = "Error";
-				continue;
-			}
-			if((inputs[1].length() < 2) || (inputs[1].charAt(0) != 'b')){
-				toReturn = "Error";
-				continue;
-			}
-			int clientID, bookID;
-			try{
-				clientID = Integer.parseInt(inputs[0]);
-				bookID = Integer.parseInt(inputs[1].substring(1));
-			}
-			catch(NumberFormatException e){
-				toReturn = "Error";
-				continue;
-			}
-			if(inputs[2] == "reserve"){
-				boolean SUCCEEDED = bookReserve(clientID, bookID);
-				if(SUCCEEDED){
-					toReturn = ("c" + clientID + " b" + bookID);
+		ServerSocket myServerSocket;
+		PriorityQueue<LamportRequest> queue = new PriorityQueue<LamportRequest>();
+		LamportClock clock = new LamportClock(serverID);
+		try{
+			myServerSocket = new ServerSocket(TCP_port);
+			while(true){
+				//first we want to get the inputs from the client
+				Socket mySocket = myServerSocket.accept();
+				PrintWriter out = new PrintWriter(mySocket.getOutputStream());
+				BufferedReader coming = new BufferedReader(new InputStreamReader(mySocket.getInputStream()));
+				String input = coming.readLine();
+				if(input.length() == 0){
+					mySocket.close();
+					continue;
+				}
+				if(input.charAt(0) == 'b'){
+					clock.incrementTime();
+					LamportRequest request = new LamportRequest(serverID, input, clock.getTime(), out, mySocket);
+					queue.add(request);
+					for(int k = 0; k < servers.length; k += 1){
+						if((k+1) != serverID){
+							InetAddress ia;
+							int port;
+							String[] address = servers[k].split(":");
+							if(address[0].equals("localhost")){
+								ia = InetAddress.getLocalHost();
+							}
+							else{
+								ia = InetAddress.getByName(address[0]);
+							}
+							port = Integer.parseInt(address[1]);
+							Socket socket = new Socket(ia, port);
+							socket.setSoTimeout(TIMEOUT);
+							PrintWriter writer = new PrintWriter(socket.getOutputStream());
+							writer.println(serverID + " request " + request.pid + " " + request.timestamp.pid + " " + request.timestamp.time);
+							writer.flush();
+							socket.close();
+						}
+					}
 				}
 				else{
-					toReturn = ("fail c" + clientID + " b" + bookID);
+					String[] inputs = input.split(" ");
+					if(inputs[1].equals("request")){
+						LamportRequest request= new LamportRequest(Integer.parseInt(inputs[2]), Integer.parseInt(inputs[3]), Integer.parseInt(inputs[4]));
+						queue.add(request);
+						clock.update(request.getTime());
+						out.println(serverID + " ack " + request.getTime().pid + " " + request.getTime().time + " " + clock.getTime().pid + " " + clock.getTime().time);
+						out.flush();
+						mySocket.close();
+					}
+					else if(inputs[1].equals("ack")){
+						LamportClock myClock = new LamportClock(Integer.parseInt(inputs[2]), Integer.parseInt(inputs[3]));
+						for(LamportRequest request: queue){
+							if((request.pid == serverID) && (request.getTime().equals(myClock))){
+								request.incrementAcks();
+								break;
+							}
+						}
+						clock.update(new LamportClock(Integer.parseInt(inputs[4]), Integer.parseInt(inputs[5])));
+						mySocket.close();
+					}
+					else if(inputs[1].equals("release")){
+						int myID = Integer.parseInt(inputs[0]);
+						for(LamportRequest request: queue){
+							if(request.pid == myID){
+								queue.remove(request);
+								break;
+							}
+						}
+						mySocket.close();
+					}
+					
+					if((queue.size() > 0) && (queue.peek().okayCS())){
+						LamportRequest request = queue.remove();
+						String toReturn = handleRequest(request.message);
+						PrintWriter writer = request.writer;
+						writer.println(toReturn);
+						writer.flush();
+						request.socket.close();
+						clientsServed += 1;
+						for(int k = 0; k < servers.length; k += 1){
+							if((k+1) != serverID){
+								InetAddress ia;
+								int port;
+								String[] address = servers[k].split(":");
+								if(address[0].equals("localhost")){
+									ia = InetAddress.getLocalHost();
+								}
+								else{
+									ia = InetAddress.getByName(address[0]);
+								}
+								port = Integer.parseInt(address[1]);
+								Socket socket = new Socket(ia, port);
+								socket.setSoTimeout(TIMEOUT);
+								writer = new PrintWriter(socket.getOutputStream());
+								writer.println(serverID + " release " + request.message);
+								writer.flush();
+								socket.close();
+							}
+						}
+					}
+					
+					if(clientsServed >= crashes.get(0)){
+						
+					}
 				}
 			}
-			else if(inputs[2] == "return"){
-				boolean SUCCEEDED = bookReturn(clientID, bookID);
-				if(SUCCEEDED){
-					toReturn = ("c" + clientID + " b" + bookID);
-				}
-				else{
-					toReturn = ("fail c" + clientID + " b" + bookID);
-				}
+		}
+		catch(IOException e){
+			e.printStackTrace();
+		}
+	}
+	
+	public static String handleRequest(String input){
+		String toReturn=null;
+		String [] inputs = input.split(" ");
+		if(inputs.length != 3){
+			toReturn = "Error";
+			return toReturn;
+		}
+		if((inputs[1].length() < 2) || (inputs[1].charAt(0) != 'b')){
+			toReturn = "Error";
+			return toReturn;
+		}
+		int clientID, bookID;
+		try{
+			clientID = Integer.parseInt(inputs[0]);
+			bookID = Integer.parseInt(inputs[1].substring(1));
+		}
+		catch(NumberFormatException e){
+			toReturn = "Error";
+			return toReturn;
+		}
+		if(inputs[2] == "reserve"){
+			boolean SUCCEEDED = bookReserve(clientID, bookID);
+			if(SUCCEEDED){
+				toReturn = ("c" + clientID + " b" + bookID);
 			}
 			else{
-				toReturn = "Error";
-				continue;
+				toReturn = ("fail c" + clientID + " b" + bookID);
 			}
-			
-			
-			
-			
 		}
+		else if(inputs[2] == "return"){
+			boolean SUCCEEDED = bookReturn(clientID, bookID);
+			if(SUCCEEDED){
+				toReturn = ("c" + clientID + " b" + bookID);
+			}
+			else{
+				toReturn = ("fail c" + clientID + " b" + bookID);
+			}
+		}
+		else{
+			toReturn = "Error";
+			return toReturn;
+		}
+		return toReturn;
 	}
 	
 	public static synchronized boolean bookReserve(int clientID, int bookID){
@@ -225,5 +256,103 @@ public class Server{
 			return true;
 		}
 		return false;
+	}
+	
+	private static class LamportRequest implements Comparable{
+		private int pid;
+		private int acks;
+		private String message;
+		private LamportClock timestamp;
+		private boolean original;
+		private PrintWriter writer;
+		private Socket socket;
+		
+		public LamportRequest(int pid, String message, LamportClock timestamp, PrintWriter writer, Socket socket){
+			this.pid = pid;
+			this.message = message;
+			this.timestamp = timestamp;
+			this.writer = writer;
+			this.socket = socket;
+			this.acks = 0;
+			original = true;
+		}
+		
+		public LamportRequest(int pid, int lcpid, int time){
+			this.pid = pid;
+			this.timestamp = new LamportClock(lcpid, time);
+			message = null;
+			acks = 0;
+			writer = null;
+			socket = null;
+			original = false;
+		}
+		
+		public LamportClock getTime(){
+			return timestamp.getTime();
+		}
+		
+		public void incrementAcks(){
+			acks += 1;
+		}
+		
+		public boolean okayCS(){
+			return (original && (acks == (servers.length - 1)));
+		}
+		
+		@Override
+		public int compareTo(Object o){
+			if(o instanceof LamportRequest){
+				LamportRequest object = (LamportRequest) o;
+				return this.timestamp.compareTo(object.timestamp);
+			}
+			return -1;
+		}
+	}
+	
+	private static class LamportClock implements Comparable{
+		private int pid;
+		private int time;
+		
+		public LamportClock(int pid){
+			this.pid = pid;
+			this.time = 0;
+		}
+		
+		public LamportClock(int pid, int time){
+			this.pid = pid;
+			this.time = time;
+		}
+		
+		public LamportClock getTime(){
+			LamportClock clock = new LamportClock(this.pid);
+			clock.time = this.time;
+			return clock;
+		}
+		
+		public void incrementTime(){
+			time += 1;
+		}
+		
+		public void update(LamportClock clock){
+			if(this.compareTo(clock) < 0){
+				this.time = clock.time + 1;
+			}
+			else{
+				this.time += 1;
+			}
+		}
+		
+		@Override
+		public int compareTo(Object o){
+			if(o instanceof LamportClock){
+				 LamportClock object = (LamportClock) o;
+				 int value = ((Integer) this.time).compareTo((Integer) object.time);
+				 if(value == 0){
+					 return ((Integer) this.pid).compareTo((Integer) object.pid);
+				 }
+				 return value;
+			}
+			return -1;
+		}
 	}
 }

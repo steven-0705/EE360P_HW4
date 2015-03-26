@@ -2,16 +2,14 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.Socket;
-import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 
 public class Client{
-	private static int clientID, serverInstances;
-	private static String IPAddress;
+	private static int clientID;
+	private static int serverInstances;
 	private static String[] servers;
 	
 	public static void main(String args[]) throws IOException{
@@ -66,70 +64,53 @@ public class Client{
 					}
 				}
 				else if((inputs.length == 2) && (inputs[0].charAt(0) == 'b')){
-					//Cycle through servers until one is available
+					TCP_Client(str);
 				}
-				/*
-				else if(inputs.length == 4){
-					int port;
-					try{
-						port = Integer.parseInt(inputs[2]);
-					}
-					catch(NumberFormatException e){
-						continue;
-					}
-					String toSend = clientID + " " + inputs[0] + " " + inputs[1];
-					if(inputs[3] == "U"){
-						UDP_Client(port, toSend);
-					}
-					else if(inputs[3] == "T"){
-						TCP_Client(port,toSend);
-					}
-				}
-				*/
 			}
 		}
 		catch(IOException e){
 			e.printStackTrace();
 			str = "";
 		}
+		input.close();
 	}
 	
-	private static void TCP_Client(int port, String toSend) throws IOException {
-		InetAddress ib = InetAddress.getByName(IPAddress);
-		Socket toServer = new Socket(ib,port);
-		BufferedReader bReader = new BufferedReader(new InputStreamReader(toServer.getInputStream()));
-		PrintStream pStream = new PrintStream(toServer.getOutputStream());
-		pStream.println(toSend);
-		pStream.flush();
-		String res = bReader.readLine();
-		System.out.println(res) ;
-	}
-
-	public static void UDP_Client(int UDP_port, String toSend){
-		String returned = null;
-		int len = 1024;
-		byte[] rbuffer = new byte[len];
-		DatagramPacket sendPacket, receivePacket;
+	private static void TCP_Client(String toSend) throws IOException {	
+		Socket toServer;
+		int k = 0;
 		try{
-			InetAddress ia = InetAddress.getByName(IPAddress);
-			DatagramSocket dataSocket = new DatagramSocket();
-			byte[] buffer = new byte[toSend.length()];
-			buffer = toSend.getBytes();
-			sendPacket = new DatagramPacket(buffer, buffer.length, ia, UDP_port);
-			dataSocket.send(sendPacket);
-			receivePacket = new DatagramPacket(rbuffer, rbuffer.length);
-			dataSocket.receive(receivePacket);
-			returned = new String(receivePacket.getData(), 0, receivePacket.getLength());
+			while(true){
+				try{
+					InetAddress ia;
+					int port;
+					String[] address = servers[k].split(":");
+					if(address[0].equals("localhost")){
+						ia = InetAddress.getLocalHost();
+					}
+					else{
+						ia = InetAddress.getByName(address[0]);
+					}
+					port = Integer.parseInt(address[1]);
+					toServer = new Socket(ia, port);
+					k = (k+1) % serverInstances;
+					BufferedReader bReader = new BufferedReader(new InputStreamReader(toServer.getInputStream()));
+					PrintStream pStream = new PrintStream(toServer.getOutputStream());
+					pStream.println(toSend);
+					pStream.flush();
+					String res = bReader.readLine();
+					System.out.println(res) ;
+					toServer.close();
+				}
+				catch(SocketTimeoutException e){
+					
+				}
+			}
 		}
-		catch (UnknownHostException e) {
-            System.err.println(e);
-        }
-		catch (SocketException e) {
-            System.err.println(e);
-        }
-		catch (IOException e) {
-            System.err.println(e);
-        }
-		System.out.println(returned);
+		catch(UnknownHostException e){
+			e.printStackTrace();
+		}
+		
+		
+		
 	}
 }
