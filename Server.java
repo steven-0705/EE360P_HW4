@@ -5,8 +5,7 @@ import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.PriorityQueue;
+import java.net.UnknownHostException;
 
 public class Server{
 	private static int[] owners;
@@ -14,9 +13,10 @@ public class Server{
 	private static int serverID;
 	private static int serverInstances;
 	private static int numBooks;
-	private static ArrayList<Integer> crashes;
-	private static ArrayList<Integer> crashTimes;
 	private static String[] servers;
+	private static DirectClock clock;
+	private static LamportMutex mutex;
+	private static ServerSocket clientSocket;
 	private static final int TIMEOUT = 100;
 	
 	public static void main(String args[]){
@@ -58,17 +58,19 @@ public class Server{
 			catch(NumberFormatException e){
 				throw new IllegalArgumentException("Must provide valid port number");
 			}
-			while(true){
-				String crash = input.readLine();
-				if(crash == null){
-					break;
-				}
-				inputs = crash.split(" ");
-				crashes.add(Integer.parseInt(inputs[1]));
-				crashTimes.add(Integer.parseInt(inputs[2]));
-			}
 			input.close();
-			TCP_Server(TCP_port);
+			clock = new DirectClock(serverID - 1);
+			mutex = new LamportMutex(serverID - 1, clock);
+			Thread thread = new Thread(){
+				public void run(){
+					try {
+						TCP_Server(TCP_port);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+			};
+			thread.start();
 		}
 		catch(IOException e){
 			e.printStackTrace();
@@ -77,112 +79,29 @@ public class Server{
 	}
 	
 	public static void TCP_Server(int TCP_port) throws IOException{
-		
-		ServerSocket myServerSocket;
-		PriorityQueue<LamportRequest> queue = new PriorityQueue<LamportRequest>();
-		LamportClock clock = new LamportClock(serverID);
 		try{
-			myServerSocket = new ServerSocket(TCP_port);
-			while(true){
-				//first we want to get the inputs from the client
-				Socket mySocket = myServerSocket.accept();
-				PrintWriter out = new PrintWriter(mySocket.getOutputStream());
-				BufferedReader coming = new BufferedReader(new InputStreamReader(mySocket.getInputStream()));
-				String input = coming.readLine();
-				if(input.length() == 0){
-					mySocket.close();
-					continue;
+			clientSocket = new ServerSocket(TCP_port);
+			Socket socket = clientSocket.accept();
+			PrintWriter out = new PrintWriter(socket.getOutputStream());
+			BufferedReader coming = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+			String input;
+			while((input = coming.readLine()) != null){
+				String[] inputs = input.split(" ");
+				if(inputs[0].equals("mutex")){
+					mutex.handleMsg(input);
 				}
-				if(input.charAt(0) == 'b'){
-					clock.incrementTime();
-					LamportRequest request = new LamportRequest(serverID, input, clock.getTime(), out, mySocket);
-					queue.add(request);
-					for(int k = 0; k < servers.length; k += 1){
-						if((k+1) != serverID){
-							InetAddress ia;
-							int port;
-							String[] address = servers[k].split(":");
-							if(address[0].equals("localhost")){
-								ia = InetAddress.getLocalHost();
-							}
-							else{
-								ia = InetAddress.getByName(address[0]);
-							}
-							port = Integer.parseInt(address[1]);
-							Socket socket = new Socket(ia, port);
-							socket.setSoTimeout(TIMEOUT);
-							PrintWriter writer = new PrintWriter(socket.getOutputStream());
-							writer.println(serverID + " request " + request.pid + " " + request.timestamp.pid + " " + request.timestamp.time);
-							writer.flush();
-							socket.close();
-						}
-					}
+				else if(inputs[0].equals("server")){
+					input = input.replace("server", "");
+					handleRequest(input);
 				}
 				else{
-					String[] inputs = input.split(" ");
-					if(inputs[1].equals("request")){
-						LamportRequest request= new LamportRequest(Integer.parseInt(inputs[2]), Integer.parseInt(inputs[3]), Integer.parseInt(inputs[4]));
-						queue.add(request);
-						clock.update(request.getTime());
-						out.println(serverID + " ack " + request.getTime().pid + " " + request.getTime().time + " " + clock.getTime().pid + " " + clock.getTime().time);
-						out.flush();
-						mySocket.close();
-					}
-					else if(inputs[1].equals("ack")){
-						LamportClock myClock = new LamportClock(Integer.parseInt(inputs[2]), Integer.parseInt(inputs[3]));
-						for(LamportRequest request: queue){
-							if((request.pid == serverID) && (request.getTime().equals(myClock))){
-								request.incrementAcks();
-								break;
-							}
-						}
-						clock.update(new LamportClock(Integer.parseInt(inputs[4]), Integer.parseInt(inputs[5])));
-						mySocket.close();
-					}
-					else if(inputs[1].equals("release")){
-						int myID = Integer.parseInt(inputs[0]);
-						for(LamportRequest request: queue){
-							if(request.pid == myID){
-								queue.remove(request);
-								break;
-							}
-						}
-						mySocket.close();
-					}
-					
-					if((queue.size() > 0) && (queue.peek().okayCS())){
-						LamportRequest request = queue.remove();
-						String toReturn = handleRequest(request.message);
-						PrintWriter writer = request.writer;
-						writer.println(toReturn);
-						writer.flush();
-						request.socket.close();
-						clientsServed += 1;
-						for(int k = 0; k < servers.length; k += 1){
-							if((k+1) != serverID){
-								InetAddress ia;
-								int port;
-								String[] address = servers[k].split(":");
-								if(address[0].equals("localhost")){
-									ia = InetAddress.getLocalHost();
-								}
-								else{
-									ia = InetAddress.getByName(address[0]);
-								}
-								port = Integer.parseInt(address[1]);
-								Socket socket = new Socket(ia, port);
-								socket.setSoTimeout(TIMEOUT);
-								writer = new PrintWriter(socket.getOutputStream());
-								writer.println(serverID + " release " + request.message);
-								writer.flush();
-								socket.close();
-							}
-						}
-					}
-					
-					if(clientsServed >= crashes.get(0)){
-						
-					}
+					mutex.requestCS();
+					String toReturn = handleRequest(input);
+					out.println(toReturn);
+					out.flush();
+					toReturn = "server " + toReturn;
+					mutex.broadcastMsg(toReturn);
+					mutex.releaseCS();
 				}
 			}
 		}
@@ -204,7 +123,7 @@ public class Server{
 		}
 		int clientID, bookID;
 		try{
-			clientID = Integer.parseInt(inputs[0]);
+			clientID = Integer.parseInt(inputs[0].substring(1));
 			bookID = Integer.parseInt(inputs[1].substring(1));
 		}
 		catch(NumberFormatException e){
@@ -258,101 +177,158 @@ public class Server{
 		return false;
 	}
 	
-	private static class LamportRequest implements Comparable{
-		private int pid;
-		private int acks;
-		private String message;
-		private LamportClock timestamp;
-		private boolean original;
-		private PrintWriter writer;
-		private Socket socket;
+	private static class LamportMutex{
+		private int[] queue;
+		private int myId;
+		private DirectClock clock;
 		
-		public LamportRequest(int pid, String message, LamportClock timestamp, PrintWriter writer, Socket socket){
-			this.pid = pid;
-			this.message = message;
-			this.timestamp = timestamp;
-			this.writer = writer;
-			this.socket = socket;
-			this.acks = 0;
-			original = true;
+		public LamportMutex(int myId, DirectClock clock){
+			queue = new int[serverInstances];
+			this.myId = myId;
+			for(int k = 0; k < serverInstances; k += 1){
+				queue[k] = Integer.MAX_VALUE;
+			}
 		}
 		
-		public LamportRequest(int pid, int lcpid, int time){
-			this.pid = pid;
-			this.timestamp = new LamportClock(lcpid, time);
-			message = null;
-			acks = 0;
-			writer = null;
-			socket = null;
-			original = false;
+		public synchronized void requestCS(){
+			try{
+				clock.sendAction();
+				queue[myId] = clock.getValue(myId);
+				broadcastMsg("mutex request " + myId + " " + clock.getValue(myId) + " " + queue[myId]);
+				while(!okayCS()){
+					wait();
+				}
+			}
+			catch(InterruptedException e){
+				e.printStackTrace();
+			}
 		}
 		
-		public LamportClock getTime(){
-			return timestamp.getTime();
-		}
-		
-		public void incrementAcks(){
-			acks += 1;
+		public synchronized void releaseCS(){
+			queue[myId] = Integer.MAX_VALUE;
+			broadcastMsg("mutex release " + myId + " " + clock.getValue(myId) + " " + queue[myId]);
 		}
 		
 		public boolean okayCS(){
-			return (original && (acks == (servers.length - 1)));
+			for(int k = 0; k < serverInstances; k += 1){
+				if(isGreater(queue[myId], myId, queue[k], k)){
+					return false;
+				}
+				if(isGreater(queue[myId], myId, clock.getValue(k), k)){
+					return false;
+				}
+			}
+			return true;
 		}
 		
-		@Override
-		public int compareTo(Object o){
-			if(o instanceof LamportRequest){
-				LamportRequest object = (LamportRequest) o;
-				return this.timestamp.compareTo(object.timestamp);
+		public boolean isGreater(int entry1, int pid1, int entry2, int pid2){
+			if(entry2 == Integer.MAX_VALUE){
+				return false;
 			}
-			return -1;
+			return ((entry1 > entry2) || ((entry1 == entry2) && (pid1 > pid2)));
+		}
+		
+		public void handleMsg(String msg){
+			String[] inputs = msg.split(" ");
+			if(!inputs[0].equals("mutex")){
+				throw new IllegalArgumentException("Non-mutex message passed to mutex handler");
+			}
+			if(inputs.length != 5){
+				throw new IllegalArgumentException("Invalid number of tokens in mutex message");
+			}
+			String str = inputs[1];
+			int msgId = Integer.parseInt(inputs[2]);
+			int msgClock = Integer.parseInt(inputs[3]);
+			int msgTimeStamp = Integer.parseInt(inputs[4]);
+			clock.recieveAction(msgId, msgClock);
+			if(str.equals("request")){
+				queue[msgId] = msgClock;
+				sendMsg("mutex ack " + myId + " " + clock.getValue(myId) + " " + queue[myId], servers[msgId]);
+			}
+			else if(str.equals("release")){
+				queue[msgId] = Integer.MAX_VALUE;
+			}
+			else if(str.equals("ack")){
+				queue[msgId] = msgTimeStamp;
+			}
+			else{
+				throw new IllegalArgumentException("Invalid mutex message");
+			}
+			notifyAll();
+		}
+		
+		public void broadcastMsg(String msg){
+			int serverIndex = 0;
+			for(String server: servers){
+				if(serverIndex != myId){
+					sendMsg(msg, server);
+				}
+				serverIndex += 1;
+			}
+		}
+		
+		public void sendMsg(String msg, String server){
+			try{
+				clock.sendAction();
+				InetAddress ia = getHost(myId);
+				int port = getPort(myId);
+				Socket socket;
+				socket = new Socket(ia, port);
+				socket.setSoTimeout(TIMEOUT);
+				PrintWriter out = new PrintWriter(socket.getOutputStream());
+				out.println(msg);
+				out.flush();
+				socket.close();
+			}
+			catch(IOException e){
+				System.err.println(e);
+			}
+		}
+		
+		public InetAddress getHost(int k) throws UnknownHostException{
+			String[] address = servers[k].split(":");
+			if(address[0].equals("localhost")){
+				return InetAddress.getLocalHost();
+			}
+			else{
+				return InetAddress.getByName(address[0]);
+			}
+		}
+		
+		public int getPort(int k) throws NumberFormatException{
+			String[] port = servers[k].split(":");
+			return Integer.parseInt(port[1]);
 		}
 	}
 	
-	private static class LamportClock implements Comparable{
-		private int pid;
-		private int time;
+	private static class DirectClock{
+		private int[] clock;
+		private int myId;
 		
-		public LamportClock(int pid){
-			this.pid = pid;
-			this.time = 0;
-		}
-		
-		public LamportClock(int pid, int time){
-			this.pid = pid;
-			this.time = time;
-		}
-		
-		public LamportClock getTime(){
-			LamportClock clock = new LamportClock(this.pid);
-			clock.time = this.time;
-			return clock;
-		}
-		
-		public void incrementTime(){
-			time += 1;
-		}
-		
-		public void update(LamportClock clock){
-			if(this.compareTo(clock) < 0){
-				this.time = clock.time + 1;
+		public DirectClock(int myId){
+			this.myId = myId;
+			clock = new int[serverInstances];
+			for(int k = 0; k < serverInstances; k += 1){
+				clock[k] = 0;
 			}
-			else{
-				this.time += 1;
-			}
+			clock[myId] = 1;
 		}
 		
-		@Override
-		public int compareTo(Object o){
-			if(o instanceof LamportClock){
-				 LamportClock object = (LamportClock) o;
-				 int value = ((Integer) this.time).compareTo((Integer) object.time);
-				 if(value == 0){
-					 return ((Integer) this.pid).compareTo((Integer) object.pid);
-				 }
-				 return value;
-			}
-			return -1;
+		public int getValue(int k){
+			return clock[k];
+		}
+		
+		public void tick(){
+			clock[myId] += 1;
+		}
+		
+		public void sendAction(){
+			tick();
+		}
+		
+		public void recieveAction(int sender, int sentValue){
+			clock[sender] = Math.max(clock[sender], sentValue);
+			clock[myId] = Math.max(clock[myId], sentValue) + 1;
 		}
 	}
 }

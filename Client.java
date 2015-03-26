@@ -8,7 +8,7 @@ import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 
 public class Client{
-	private static int clientID;
+	private static String clientID;
 	private static int serverInstances;
 	private static String[] servers;
 	
@@ -21,15 +21,15 @@ public class Client{
 			if(inputs.length != 2){
 				throw new IllegalArgumentException("Must provide Client ID and Number of Server Instances");
 			}
+			clientID = inputs[0];
 			try{
-				clientID = Integer.parseInt(inputs[0]);
 				serverInstances = Integer.parseInt(inputs[1]);
 			}
 			catch(NumberFormatException e){
 				throw new IllegalArgumentException("Must provide valid integers");
 			}
-			if(clientID <= 0){
-				throw new IllegalArgumentException("Must provide non-negative integers");
+			if(clientID.charAt(0) != 'c'){
+				throw new IllegalArgumentException("Must provide valid client id");
 			}
 			for(int k = 0; k < serverInstances; k += 1){
 				servers[k] = input.readLine();
@@ -64,7 +64,8 @@ public class Client{
 					}
 				}
 				else if((inputs.length == 2) && (inputs[0].charAt(0) == 'b')){
-					TCP_Client(str);
+					String toSend = clientID + " " + inputs[0] + " " + inputs[1];
+					TCP_Client(toSend);
 				}
 			}
 		}
