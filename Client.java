@@ -11,6 +11,7 @@ public class Client{
 	private static String clientID;
 	private static int serverInstances;
 	private static String[] servers;
+	private static final boolean DEBUG = false;
 	
 	public static void main(String args[]) throws IOException{
 		BufferedReader input = new BufferedReader(new InputStreamReader(System.in));
@@ -29,8 +30,14 @@ public class Client{
 				throw new IllegalArgumentException("Must provide valid integers");
 			}
 			if(clientID.charAt(0) != 'c'){
-				throw new IllegalArgumentException("Must provide valid client id");
+				throw new IllegalArgumentException("Must provide valid client ID");
 			}
+			if(DEBUG){
+				System.out.println("Client ID: " + clientID);
+				System.out.println("Number of Servers: " + serverInstances);
+				System.out.println("------------------------------------------------------------------");
+			}
+			servers = new String[serverInstances];
 			for(int k = 0; k < serverInstances; k += 1){
 				servers[k] = input.readLine();
 				if(servers[k] == null){
@@ -46,9 +53,9 @@ public class Client{
 				}
 				if(str == null){
 					break;
-				}
+				}	
 				inputs = str.split(" ");
-				if((inputs.length == 2) && (inputs[0] == "sleep")){
+				if(inputs[0].equals("sleep")){
 					int sleep;
 					try{
 						sleep = Integer.parseInt(inputs[1]);
@@ -58,12 +65,16 @@ public class Client{
 					}
 					try{
 						Thread.sleep(sleep);
+						if(DEBUG){
+							System.out.println("Thread sleeping for " + sleep + " milliseconds");
+							System.out.println("------------------------------------------------------------------");
+						}
 					}
 					catch(InterruptedException e){
 						continue;
 					}
 				}
-				else if((inputs.length == 2) && (inputs[0].charAt(0) == 'b')){
+				else if(inputs[0].charAt(0) == 'b'){
 					String toSend = clientID + " " + inputs[0] + " " + inputs[1];
 					TCP_Client(toSend);
 				}
@@ -96,11 +107,16 @@ public class Client{
 					k = (k+1) % serverInstances;
 					BufferedReader bReader = new BufferedReader(new InputStreamReader(toServer.getInputStream()));
 					PrintStream pStream = new PrintStream(toServer.getOutputStream());
+					if(DEBUG){
+						System.out.println("Sending Message: " + toSend);
+						System.out.println("------------------------------------------------------------------");
+					}
 					pStream.println(toSend);
 					pStream.flush();
 					String res = bReader.readLine();
 					System.out.println(res) ;
 					toServer.close();
+					break;
 				}
 				catch(SocketTimeoutException e){
 					
