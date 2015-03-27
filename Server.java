@@ -149,7 +149,7 @@ public class Server{
 							Socket socket = new Socket(ia, port);
 							socket.setSoTimeout(TIMEOUT);
 							PrintWriter writer = new PrintWriter(socket.getOutputStream());
-							writer.println(serverID + " request " + request.pid + " " + request.timestamp.pid + " " + request.timestamp.time);
+							writer.println(serverID + " request " + request.pid + " " + request.clock.pid + " " + request.clock.time);
 							writer.flush();
 							socket.close();
 						}
@@ -231,13 +231,14 @@ public class Server{
 								Socket socket = new Socket(ia, port);
 								socket.setSoTimeout(TIMEOUT);
 								writer = new PrintWriter(socket.getOutputStream());
-								writer.println(serverID + " release " + request.message);
+								writer.println(serverID + " release ");
 								writer.flush();
 								socket.close();
 							}
 						}
 					}
 					if(clientsServed >= crashAmount && (crashAmount != 0)){
+						queue.clear();
 						try{
 							Thread.sleep(crashTime);
 						}
@@ -321,18 +322,18 @@ public class Server{
 		return false;
 	}
 	
-	private static class LamportRequest{
+	private static class LamportRequest implements Comparable{
 		private int pid;
 		private int acks;
 		private String message;
-		private LamportClock timestamp;
+		private LamportClock clock;
 		private PrintWriter writer;
 		private Socket socket;
 		
-		public LamportRequest(int pid, String message, LamportClock timestamp, PrintWriter writer, Socket socket){
+		public LamportRequest(int pid, String message, LamportClock clock, PrintWriter writer, Socket socket){
 			this.pid = pid;
 			this.message = message;
-			this.timestamp = timestamp;
+			this.clock = clock;
 			this.writer = writer;
 			this.socket = socket;
 			this.acks = 0;
@@ -340,7 +341,7 @@ public class Server{
 		
 		public LamportRequest(int pid, int lcpid, int time){
 			this.pid = pid;
-			this.timestamp = new LamportClock(lcpid, time);
+			this.clock = new LamportClock(lcpid, time);
 			message = null;
 			acks = 0;
 			writer = null;
@@ -348,7 +349,7 @@ public class Server{
 		}
 		
 		public LamportClock getTime(){
-			return timestamp.getTime();
+			return clock.getTime();
 		}
 		
 		public void incrementAcks(){
@@ -356,11 +357,18 @@ public class Server{
 		}
 		
 		public boolean okayCS(){
-			return ((pid == serverID) && (acks == (servers.length - 1)));
+			return ((pid == serverID) && (acks == (serverInstances - 1)));
+		}
+		
+		public int compareTo(Object o) {
+			if(o instanceof LamportRequest) {
+				return this.clock.compareTo(((LamportRequest) o).clock);
+			}
+			return -1;
 		}
 	}
 	
-	private static class LamportClock{
+	private static class LamportClock implements Comparable{
 		private int pid;
 		private int time;
 		
@@ -385,7 +393,7 @@ public class Server{
 		}
 		
 		public void update(LamportClock clock){
-			if(this.isGreater(clock) < 0){
+			if(this.isLesser(clock)){
 				this.time = clock.time + 1;
 			}
 			else{
@@ -393,12 +401,22 @@ public class Server{
 			}
 		}
 		
-		public int isGreater(LamportClock clock){
-			 int value = ((Integer) this.time).compareTo((Integer) clock.time);
-			 if(value == 0){
-				 return ((Integer) this.pid).compareTo((Integer) clock.pid);
-			 }
-			 return value;
+		public boolean isLesser(LamportClock clock){
+			return ((this.time < clock.time) || ((this.time == clock.time) && (this.pid < clock.pid)));
+		}
+		
+		public int compareTo(Object o) {
+			if(o instanceof LamportClock)
+			{
+				LamportClock clock = (LamportClock) o;
+
+				int value = ((Integer) this.time).compareTo((Integer) clock.time);
+				if(value == 0) {
+					return ((Integer) this.pid).compareTo((Integer) clock.pid);
+				}
+				return value;
+			}
+			return -1;
 		}
 	}
 }
